@@ -1,11 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
+import { useFileSystem } from './FileSystem'
+import { useTextEdit } from './TextEdit'
 
-const files: Record<string, string | null> = {
-  '/': null, '/Users': null, '/Users/zafar': null,
-  '/Users/zafar/Desktop': null, '/Users/zafar/Documents': null, '/Users/zafar/Downloads': null,
-  '/Users/zafar/Documents/Ideas.txt': 'Make something useful.\nTake a walk by the water.\nWrite down one good idea every day.',
-  '/Users/zafar/Desktop/Read Me.txt': 'Welcome to Golden Gate.\nLaunch apps from the Dock or with the open command.',
-}
 const home = '/Users/zafar'
 function resolve(path: string, cwd: string) {
   const expanded = path === '~' ? home : path.startsWith('~/') ? home + path.slice(1) : path
@@ -17,9 +13,12 @@ function resolve(path: string, cwd: string) {
   return '/' + parts.join('/')
 }
 export default function Terminal({ onLaunch }: { onLaunch: (app: string) => void }) {
+  const fs = useFileSystem()
+  const editor = useTextEdit()
+  const files: Record<string, string | null> = Object.fromEntries(fs.entries.filter(f => !f.trashed).map(f => [f.path, f.kind === 'folder' ? null : f.text]))
   const [cwd, setCwd] = useState(home)
   const [command, setCommand] = useState('')
-  const [lines, setLines] = useState(['Golden Gate Terminal — simulated shell', 'Type help to see commands. Files here are demo files.'])
+  const [lines, setLines] = useState(['Golden Gate Terminal — simulated shell', 'Type help to see commands. Files are shared with Finder and TextEdit and saved in this browser.'])
   const [history, setHistory] = useState<string[]>([])
   const [cursor, setCursor] = useState(0)
   const draft = useRef('')
@@ -33,7 +32,28 @@ export default function Terminal({ onLaunch }: { onLaunch: (app: string) => void
     const [name, ...args] = tokens
     let result = ''
     const path = resolve(args.join(' ') || '.', cwd)
-    switch (name) {
+    try { switch (name) {
+      case 'touch':
+      case 'mkdir': {
+        if (!args.length) throw new Error(`Usage: ${name} <path>`)
+        if (name === 'touch' && Object.hasOwn(files, path)) break
+        fs.create(path, name === 'mkdir' ? 'folder' : 'file'); break
+      }
+      case 'write': {
+        if (args.length < 2) throw new Error('Usage: write <file> <text> (quote names with spaces)')
+        const target = resolve(args[0], cwd)
+        const entry = fs.entries.find(f => !f.trashed && f.path === target)
+        if (entry?.kind === 'folder') throw new Error('Cannot write to a folder.')
+        if (entry) fs.write(entry.id, args.slice(1).join(' '))
+        else fs.create(target, 'file', args.slice(1).join(' '))
+        break
+      }
+      case 'rm': {
+        if (!args.length) throw new Error('Usage: rm <path> (moves to Trash)')
+        const entry = fs.entries.find(f => !f.trashed && f.path === path)
+        if (!entry) throw new Error('No such file or folder.')
+        fs.trash(entry.id); result = 'Moved to Trash'; break
+      }
       case 'help': result = 'help                Show commands\nls [path]           List demo files\ncd [path]           Change folder (supports ~ and ..)\npwd                 Show current folder\ncat <file>          Read a demo file (quote names with spaces)\nopen <app>          Launch Finder, Notes, Safari, Calendar, System Settings\necho <text>         Print text\ndate                Show local date and time\nwhoami              Show username\nhistory             Show command history\nclear               Clear output'; break
       case 'pwd': result = cwd; break
       case 'whoami': result = 'zafar'; break
@@ -59,12 +79,16 @@ export default function Terminal({ onLaunch }: { onLaunch: (app: string) => void
       }
       case 'cat': result = !args.length ? 'Usage: cat <file>' : !Object.hasOwn(files, path) ? `cat: no such file: ${args.join(' ')}` : files[path] === null ? 'cat: this is a directory' : files[path]!; break
       case 'open': {
-        const app = ['Finder', 'Notes', 'Safari', 'Calendar', 'System Settings', 'Terminal'].find(app => app.toLowerCase() === args.join(' ').toLowerCase())
-        if (app) { onLaunch(app); result = `Opened ${app}` } else result = 'Usage: open Finder | Notes | Safari | Calendar | System Settings | Terminal'
+        const app = ['Finder', 'Notes', 'Safari', 'Calendar', 'TextEdit', 'System Settings', 'Terminal', 'Trash'].find(app => app.toLowerCase() === args.join(' ').toLowerCase())
+        const entry = fs.entries.find(f => !f.trashed && f.kind === 'file' && f.path === path)
+        if (app) { onLaunch(app); result = `Opened ${app}` }
+        else if (entry) { editor.select(entry.id); onLaunch('TextEdit'); result = `Opened ${path}` }
+        else result = 'Usage: open <app or text file>'
         break
       }
       default: result = `${name}: command not found. Type help for available commands.`
-    }
+    } } catch (error) { result = `${name}: ${(error as Error).message}` }
+    if (name === 'help') result += '\n\nShared browser filesystem:\ntouch <file>        Create a file\nmkdir <folder>      Create a folder\nwrite <file> <text>  Save text to a file\nrm <path>           Move a file or folder to Trash\nopen <file>         Edit a file in TextEdit\nopen Trash          Restore or empty deleted items'
     setLines(current => [...current, `${cwd.replace(home, '~')} % ${raw}`, ...(result ? [result] : [])].slice(-300))
   }
   return <div className="terminal-content"><div className="terminal-output" ref={output} role="log" aria-label="Terminal output">{lines.map((line, i) => <pre key={i}>{line}</pre>)}</div><form className="terminal-prompt" onSubmit={e => { e.preventDefault(); run() }}><label htmlFor="terminal-command">{cwd.replace(home, '~')} %</label><input id="terminal-command" aria-label="Terminal command" value={command} autoComplete="off" autoCapitalize="off" spellCheck={false} onChange={e => setCommand(e.target.value)} onKeyDown={e => {

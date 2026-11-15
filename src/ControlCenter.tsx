@@ -1,8 +1,8 @@
 import { useState } from 'react'
 import { Symbol } from './Icons'
 import { usePreferences } from './Preferences'
-export default function ControlCenter({ brightness, onBrightness }: { brightness: number; onBrightness: (value: number) => void }) {
-  const [wifi, setWifi] = useState(true)
+export default function ControlCenter({ brightness, onBrightness, wifi, onWifi }: { brightness: number; onBrightness: (value: number) => void; wifi: boolean; onWifi: () => void }) {
+  const setWifi = (_toggle: (value: boolean) => boolean) => onWifi()
   const [bluetooth, setBluetooth] = useState(true)
   const [focus, setFocus] = useState(false)
   const [airdrop, setAirdrop] = useState(false)

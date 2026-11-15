@@ -3,6 +3,13 @@ import type { PointerEvent as ReactPointerEvent } from 'react'
 import { NativeIcon, Symbol } from './Icons'
 import Finder from './Finder'
 import Notes from './Notes'
+import TextEdit, { TextEditProvider, useTextEdit } from './TextEdit'
+import { FileSystemProvider, useFileSystem, fileName } from './FileSystem'
+import Trash from './Trash'
+import DesktopFiles from './DesktopFiles'
+import MissionControl from './MissionControl'
+import './window-management.css'
+import './filesystem.css'
 import Calendar from './Calendar'
 import Terminal from './Terminal'
 import Safari from './Safari'
@@ -14,10 +21,11 @@ import './macos.css'
 import './personalization.css'
 import './desktop-features.css'
 
-type AppName = 'Finder' | 'Notes' | 'Safari' | 'Calendar' | 'System Settings' | 'Terminal' | 'Trash'
-type WindowState = { open: boolean; minimized: boolean; maximized?: boolean; x: number; y: number; w: number; h: number }
+type AppName = 'Finder' | 'Notes' | 'Safari' | 'Calendar' | 'System Settings' | 'Terminal' | 'Trash' | 'TextEdit'
+type WindowState = { open: boolean; minimized: boolean; maximized?: boolean; snap?: 'left' | 'right'; x: number; y: number; w: number; h: number }
 
 const initialWindows: Record<AppName, WindowState> = {
+  TextEdit: { open: false, minimized: false, x: 240, y: 100, w: 680, h: 460 },
   Finder: { open: true, minimized: false, x: 196, y: 103, w: 700, h: 430 },
   Notes: { open: false, minimized: false, x: 285, y: 130, w: 620, h: 425 },
   Safari: { open: false, minimized: false, x: 165, y: 100, w: 760, h: 450 },
@@ -27,7 +35,7 @@ const initialWindows: Record<AppName, WindowState> = {
   Trash: { open: false, minimized: false, x: 260, y: 140, w: 520, h: 340 },
 }
 
-const dockApps: AppName[] = ['Finder', 'Safari', 'Notes', 'Calendar', 'Terminal', 'System Settings']
+const dockApps: AppName[] = ['Finder', 'Safari', 'Notes', 'Calendar', 'TextEdit', 'Terminal', 'System Settings']
 const apps = Object.keys(initialWindows) as AppName[]
 function loadSession() {
   const result = { windows: { ...initialWindows }, active: 'Finder' as AppName, order: [...apps] }
@@ -38,7 +46,7 @@ function loadSession() {
       if (saved && typeof saved.open === 'boolean' && typeof saved.minimized === 'boolean' && ['x','y','w','h'].every(key => Number.isFinite(saved[key]))) {
         const w = Math.max(Math.min(360, innerWidth), Math.min(innerWidth, saved.w))
         const h = Math.max(240, Math.min(Math.max(240, innerHeight - 118), saved.h))
-        result.windows[app] = { open: saved.open, minimized: saved.minimized, maximized: saved.maximized === true, w, h, x: Math.max(0, Math.min(innerWidth - w, saved.x)), y: Math.max(0, Math.min(Math.max(0, innerHeight - h - 118), saved.y)) }
+        result.windows[app] = { open: saved.open, minimized: saved.minimized, maximized: saved.maximized === true, snap: saved.snap === 'left' || saved.snap === 'right' ? saved.snap : undefined, w, h, x: Math.max(0, Math.min(innerWidth - w, saved.x)), y: Math.max(0, Math.min(Math.max(0, innerHeight - h - 118), saved.y)) }
       }
     }
     if (apps.includes(data?.active)) result.active = data.active
@@ -48,6 +56,32 @@ function loadSession() {
 }
 
 function Desktop() {
+  const fs = useFileSystem()
+  const [undoError, setUndoError] = useState('')
+  const undoFiles = () => { try { fs.undo(); setUndoError('') } catch (error) { setUndoError((error as Error).message) } }
+  useEffect(() => {
+    const key = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null
+      if ((event.metaKey || event.ctrlKey) && !event.shiftKey && !event.altKey && event.key.toLowerCase() === 'z' && !target?.closest('input,textarea,select,[contenteditable="true"],[role="textbox"]')) {
+        event.preventDefault()
+        try { fs.undo(); setUndoError('') } catch (error) { setUndoError((error as Error).message) }
+      }
+    }
+    window.addEventListener('keydown', key)
+    return () => window.removeEventListener('keydown', key)
+  }, [fs.undo])
+  const { importFiles } = useTextEdit()
+  const [wifi, setWifi] = useState(true)
+  const [tray, setTray] = useState<'wifi' | 'battery' | null>(null)
+  const [lowPower, setLowPower] = useState(false)
+  useEffect(() => {
+    if (!tray) return
+    const dismiss = () => setTray(null)
+    const key = (event: KeyboardEvent) => { if (event.key === 'Escape') dismiss() }
+    window.addEventListener('click', dismiss)
+    window.addEventListener('keydown', key)
+    return () => { window.removeEventListener('click', dismiss); window.removeEventListener('keydown', key) }
+  }, [tray])
   const [session] = useState(loadSession)
   const [windows, setWindows] = useState(session.windows)
   const [active, setActive] = useState<AppName>(session.active)
@@ -57,6 +91,7 @@ function Desktop() {
   const [now, setNow] = useState(new Date())
   const [order, setOrder] = useState<AppName[]>(session.order)
   const [spotlight, setSpotlight] = useState(false)
+  const [mission, setMission] = useState(false)
   const [menuLeft, setMenuLeft] = useState(9)
   const [context, setContext] = useState<{ x: number; y: number } | null>(null)
   const [info, setInfo] = useState<{ title: string; body: string } | null>(null)
@@ -78,13 +113,19 @@ function Desktop() {
 
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
+      if (event.key === 'F3' || (event.ctrlKey && event.code === 'ArrowUp')) {
+        event.preventDefault()
+        if (!event.repeat) setMission(value => !value)
+        setSpotlight(false); setMenu(null); setTray(null); setShowControl(false); setContext(null); setInfo(null)
+      }
       if ((event.metaKey || event.ctrlKey) && event.code === 'Space') {
         event.preventDefault()
         setSpotlight(value => !value)
+        setMission(false)
         setMenu(null)
         setShowControl(false)
       }
-      if (event.key === 'Escape') { setSpotlight(false); setMenu(null); setShowControl(false); setContext(null); setInfo(null) }
+      if (event.key === 'Escape') { setMission(false); setSpotlight(false); setMenu(null); setShowControl(false); setContext(null); setInfo(null) }
     }
     window.addEventListener('keydown', handleKey)
     return () => window.removeEventListener('keydown', handleKey)
@@ -106,6 +147,7 @@ function Desktop() {
   const date = useMemo(() => now.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' }), [now])
 
   const launch = (app: AppName) => {
+    setMission(false)
     setMenu(null); setContext(null); setShowControl(false)
     focus(app)
     setWindows((current) => ({ ...current, [app]: { ...current[app], open: true, minimized: false } }))
@@ -136,14 +178,27 @@ function Desktop() {
     Window: [{ label: 'Minimize', action: () => minimize(active), disabled: !windows[active].open || windows[active].minimized }, { label: windows[active].maximized ? 'Restore Size' : 'Zoom', action: () => updateBounds(active, { maximized: !windows[active].maximized }), disabled: !windows[active].open || windows[active].minimized }, { label: 'Bring All to Front', action: restoreWindows }, { label: 'Reset Window Positions', action: resetLayout }, ...dockApps.map(app => ({ label: app, action: () => launch(app) }))],
     Help: [{ label: 'Desktop Guide', action: () => message('Desktop Guide', 'Launch apps from the Dock or Go menu. Drag title bars to move windows and drag their bottom-right corners to resize. The green button maximizes and restores. Double-click Finder items to open them. Notes and Calendar save locally. Terminal is a simulated shell: type help for commands.') }, { label: 'Keyboard Shortcuts', action: () => message('Keyboard Shortcuts', '⌘ Space / Ctrl Space: Spotlight\n⌘⌥D / Ctrl+Alt+D: toggle Dock auto-hide\nEscape: dismiss menus and panels\nSpotlight: ↑ ↓ to select, Enter to open\nFinder: Enter or Space to open a focused item\nTerminal: ↑ ↓ for command history') }],
   }
+  menuOptions.File.unshift({ label: 'New Text Document', action: () => runCommand('TextEdit', 'new') })
+  menuOptions.Edit.unshift({ label: fs.undoLabel ? `Undo ${fs.undoLabel}` : 'Undo File Operation', action: undoFiles, disabled: !fs.undoLabel })
+  menuOptions.Edit[3] = { label: 'Search Apps and Files…', action: () => { setSpotlight(true); setMenu(null) } }
+  menuOptions.Help[1] = { label: 'Keyboard Shortcuts', action: () => message('Keyboard Shortcuts', '⌘ Space / Ctrl Space: Spotlight\nF3 / Ctrl+↑: Mission Control\n⌘⌥D / Ctrl+Alt+D: toggle Dock auto-hide\nEscape: dismiss menus and panels\nFinder and desktop: Space for Quick Look, Enter to open\nFinder: F2 to rename\nTextEdit: ⌘S / Ctrl+S to download\nTerminal: ↑ ↓ for command history') }
+  menuOptions.Window[1] = { label: windows[active].maximized || windows[active].snap ? 'Restore Size' : 'Zoom', action: () => updateBounds(active, { maximized: windows[active].snap ? false : !windows[active].maximized, snap: undefined }), disabled: !windows[active].open || windows[active].minimized }
+  const openMission = () => { setMission(true); setMenu(null); setTray(null); setShowControl(false); setSpotlight(false); setContext(null); setInfo(null) }
+  menuOptions.Window.unshift(
+    { label: 'Mission Control', action: openMission },
+    ...(['left', 'right'] as const).map(side => ({ label: `Tile Window to ${side === 'left' ? 'Left' : 'Right'}`, action: () => updateBounds(active, { snap: side, maximized: false }), disabled: !windows[active].open || windows[active].minimized })),
+    { label: 'Restore Window Size', action: () => updateBounds(active, { snap: undefined, maximized: false }), disabled: !windows[active].open || windows[active].minimized },
+  )
   const expanded = Boolean(menu || showControl || spotlight)
   const openMenu = (name: string, target: HTMLElement) => {
+    setTray(null)
     setMenu(name); setMenuLeft(Math.max(4, Math.min(target.getBoundingClientRect().left, innerWidth - 244))); setShowControl(false); setSpotlight(false); setContext(null)
   }
   const toggleMenu = (name: string, target: HTMLElement) => menu === name ? setMenu(null) : openMenu(name, target)
 
   return (
     <AppCommandContext.Provider value={commandContext}>
+    <div style={{ display: 'contents' }} onDragOver={event => { if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy' } }} onDrop={event => { event.preventDefault(); const files = Array.from(event.dataTransfer.files); if (files.length) { launch('TextEdit'); void importFiles(files) } }}>
     <main className={`${dark ? 'desktop dark' : 'desktop'} dock-mode-${preferences.dock}`} style={{ background: wallpapers.find(w => w.id === preferences.wallpaper)?.background, '--accent': accents[preferences.accent], '--wallpaper-dim': 1 - brightness / 100 } as CSSProperties} onClick={() => { setMenu(null); setContext(null); setShowControl(false) }} onContextMenu={event => { if ((event.target as HTMLElement).closest('.app-window,.menubar,.dock')) return; event.preventDefault(); setMenu(null); setContext({ x: Math.max(4, Math.min(event.clientX, innerWidth - 244)), y: Math.max(30, Math.min(event.clientY, innerHeight - 250)) }) }}>
       <div className="wallpaper-dimmer" />
       <div className="wallpaper-glow" />
@@ -154,16 +209,15 @@ function Desktop() {
           {['File', 'Edit', 'View', 'Go', 'Window', 'Help'].map(item => <button key={item} className="menu-item" aria-haspopup="menu" aria-expanded={menu === item} onMouseEnter={e => { if (expanded) openMenu(item, e.currentTarget) }} onClick={e => toggleMenu(item, e.currentTarget)}>{item}</button>)}
         </div>
         <div className="menu-right">
-          <span className="battery"><i /></span><Symbol name="wifi" /><button aria-label="Spotlight" className="status-button" onMouseEnter={() => { if (expanded) { setSpotlight(true); setMenu(null); setShowControl(false) } }} onClick={() => { setSpotlight(value => !value); setMenu(null); setShowControl(false) }}><Symbol name="search" size={16} /></button><button aria-label="Control Center" className="control-button" onMouseEnter={() => { if (expanded) { setShowControl(true); setMenu(null); setSpotlight(false) } }} onClick={() => { setShowControl(value => !value); setMenu(null); setSpotlight(false) }}><Symbol name="control" size={17} /></button><button aria-label="Open Calendar" className="menu-clock" onClick={() => launch('Calendar')}><span className="date">{date}</span> {clock}</button>
+          <button className="status-button" aria-label="Mission Control" aria-expanded={mission} title="Mission Control (F3 or Ctrl+↑)" onClick={openMission}><Symbol name="grid" size={16} /></button>
+          <button aria-label="Battery status" aria-expanded={tray === 'battery'} className="status-button" onClick={e => { e.stopPropagation(); setTray(value => value === 'battery' ? null : 'battery'); setMenu(null); setShowControl(false); setSpotlight(false) }}><span className="battery"><i /></span></button>
+          <button aria-label="Wi-Fi status" aria-expanded={tray === 'wifi'} className="status-button" style={{ opacity: wifi ? 1 : .45 }} onClick={e => { e.stopPropagation(); setTray(value => value === 'wifi' ? null : 'wifi'); setMenu(null); setShowControl(false); setSpotlight(false) }}><Symbol name="wifi" /></button>
+          <button aria-label="Spotlight" className="status-button" onClick={() => { setTray(null); setSpotlight(value => !value); setMenu(null); setShowControl(false) }}><Symbol name="search" size={16} /></button><button aria-label="Control Center" className="control-button" onClick={() => { setTray(null); setShowControl(value => !value); setMenu(null); setSpotlight(false) }}><Symbol name="control" size={17} /></button><button aria-label="Open Calendar" className="menu-clock" onClick={() => launch('Calendar')}><span className="date">{date}</span> {clock}</button>
         </div>
         {menu && <div ref={menuRef} className="menu-popover functional-menu" role="menu" aria-label={menu === 'apple' ? 'Apple' : menu === 'app' ? active : menu} style={{ left: menuLeft }} onKeyDown={e => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const buttons = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')); const index = buttons.indexOf(document.activeElement as HTMLButtonElement); buttons[(index + (e.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus() } }}>{menuOptions[menu]?.map(option => <button role="menuitem" key={option.label} disabled={option.disabled} onClick={() => { option.action(); setMenu(null) }}>{option.label}</button>)}</div>}
       </header>
 
-      <section className="desktop-icons">
-        <DesktopIcon label="Macintosh HD" icon="disk" onOpen={() => openFolder('Macintosh HD')} />
-        <DesktopIcon label="Golden Gate" icon="folder" onOpen={() => openFolder('Golden Gate')} />
-        <DesktopIcon label="Shared" icon="shared" onOpen={() => openFolder('Shared')} />
-      </section>
+      <DesktopFiles onFolder={openFolder} onTextEdit={() => launch('TextEdit')} />
 
       <div className="window-layer">
         {(Object.keys(windows) as AppName[]).map((app) => windows[app].open && !windows[app].minimized && (
@@ -171,7 +225,11 @@ function Desktop() {
         ))}
       </div>
 
-      {showControl && <ControlCenter brightness={brightness} onBrightness={setBrightness} />}
+      {tray && <aside className="tray-panel" aria-label={tray === 'wifi' ? 'Wi-Fi' : 'Battery'} onClick={e => e.stopPropagation()}>
+        <header><strong>{tray === 'wifi' ? 'Wi-Fi' : 'Battery'}</strong><button aria-label="Close status panel" onClick={() => setTray(null)}>×</button></header>
+        {tray === 'wifi' ? <><button className="tray-toggle" aria-pressed={wifi} onClick={() => setWifi(value => !value)}><span>Wi-Fi</span><b>{wifi ? 'On' : 'Off'}</b></button><p>{wifi ? '✓ Golden Gate · Connected' : 'Wi-Fi is turned off'}</p><small>Simulated connection. Browser connectivity is unchanged.</small></> : <><p><strong>100%</strong> · Connected to power</p><button className="tray-toggle" aria-pressed={lowPower} onClick={() => { setLowPower(value => !value); setBrightness(lowPower ? 100 : 60) }}><span>Low Power Mode</span><b>{lowPower ? 'On' : 'Off'}</b></button><small>Demo battery status. Low Power Mode dims this desktop.</small></>}
+      </aside>}
+      {showControl && <ControlCenter brightness={brightness} onBrightness={setBrightness} wifi={wifi} onWifi={() => setWifi(value => !value)} />}
 
       {preferences.dock === 'auto' && <div className="dock-reveal-edge" onMouseEnter={() => setDockReveal(true)} />}
       <nav aria-label="Dock" className={`dock ${dockReveal ? 'dock-revealed' : ''}`} onMouseEnter={() => setDockReveal(true)} onMouseLeave={() => setDockReveal(false)} onFocus={() => setDockReveal(true)} onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDockReveal(false) }} onClick={(event) => event.stopPropagation()}>
@@ -181,75 +239,110 @@ function Desktop() {
           <button aria-label="Trash" className={`dock-app ${windows.Trash.open ? 'selected' : ''}`} onClick={() => launch('Trash')}><NativeIcon name="trash" /><small>Trash</small></button>
         </div>
       </nav>
-      {spotlight && <Spotlight onClose={() => setSpotlight(false)} onLaunch={app => { launch(app); setSpotlight(false) }} />}
+      {spotlight && <Spotlight onClose={() => setSpotlight(false)} onLaunch={app => { launch(app); setSpotlight(false) }} onFolder={path => { openFolder(path); setSpotlight(false) }} />}
+      {(fs.undoLabel || undoError) && <div className="file-undo-bar" onClick={event => event.stopPropagation()}><span role="status">{undoError || fs.undoLabel}</span><button disabled={!fs.undoLabel} onClick={undoFiles}>Undo</button>{undoError && <button aria-label="Dismiss undo error" onClick={() => setUndoError('')}>×</button>}</div>}
+      {mission && <MissionControl windows={order.filter(app => windows[app].open).map(app => ({ name: app, minimized: windows[app].minimized, active: active === app }))} onClose={() => setMission(false)} onSelect={name => launch(name as AppName)} />}
       {context && <div className="desktop-context functional-menu" role="menu" aria-label="Desktop" style={{ left: context.x, top: context.y }} onClick={e => e.stopPropagation()}>{[{ label: 'Open Finder', action: () => openFolder('Desktop') }, { label: 'Open Terminal', action: () => launch('Terminal') }, { label: 'Change Wallpaper…', action: () => settings('Wallpaper') }, { label: preferences.dock === 'hidden' ? 'Show Dock' : 'Hide Dock', action: () => update({ dock: preferences.dock === 'hidden' ? 'show' : 'hidden' }) }, { label: preferences.dock === 'auto' ? 'Turn Off Dock Auto-hide' : 'Automatically Hide Dock', action: () => update({ dock: preferences.dock === 'auto' ? 'show' : 'auto' }) }, { label: 'Show Desktop', action: showDesktop }, { label: 'Restore Windows', action: restoreWindows }].map(option => <button role="menuitem" key={option.label} onClick={() => { option.action(); setContext(null) }}>{option.label}</button>)}</div>}
       {info && <div className="desktop-info-overlay" onClick={() => setInfo(null)}><section role="dialog" aria-modal="true" aria-label={info.title} onClick={e => e.stopPropagation()}><h2>{info.title}</h2><p>{info.body}</p><button autoFocus onClick={() => setInfo(null)}>Done</button></section></div>}
     </main>
+    </div>
     </AppCommandContext.Provider>
   )
 }
 
-function DesktopIcon({ label, icon, onOpen }: { label: string; icon: string; onOpen: () => void }) {
-  return <button className="desktop-icon" onDoubleClick={onOpen} onKeyDown={event => { if (event.key === 'Enter') onOpen() }}><NativeIcon name={icon} /><small>{label}</small></button>
-}
-
 function AppWindow({ app, state, active, zIndex, onBounds, onFocus, onClose, onMinimize, onLaunch, folderRequest }: { app: AppName; state: WindowState; active: boolean; zIndex: number; onBounds: (bounds: Partial<WindowState>) => void; onFocus: () => void; onClose: () => void; onMinimize: () => void; onLaunch: (app: string) => void; folderRequest: { location: string; revision: number } }) {
   const maximized = state.maximized
+  const [preview, setPreview] = useState<'left' | 'right' | 'maximize' | null>(null)
+  const pending = useRef<typeof preview>(null)
   const gesture = useRef<{ mode: 'move' | 'resize'; x: number; y: number; bounds: WindowState } | null>(null)
   const toggleMaximize = () => {
-    onBounds({ maximized: !maximized })
+    onBounds({ maximized: state.snap ? false : !maximized, snap: undefined })
     onFocus()
   }
   const start = (event: ReactPointerEvent<HTMLElement>, mode: 'move' | 'resize') => {
-    if (event.button !== 0 || maximized || (event.target as HTMLElement).closest('button')) return
+    if (event.button !== 0 || (event.target as HTMLElement).closest('button') || (mode === 'resize' && maximized)) return
     event.preventDefault()
     onFocus()
+    pending.current = null; setPreview(null)
     gesture.current = { mode, x: event.clientX, y: event.clientY, bounds: state }
     event.currentTarget.setPointerCapture(event.pointerId)
   }
   const move = (event: ReactPointerEvent<HTMLElement>) => {
     const drag = gesture.current
     if (!drag) return
+    const layer = event.currentTarget.closest('.window-layer')!.getBoundingClientRect()
+    const width = layer.width, height = layer.height
+    if (drag.mode === 'move' && (drag.bounds.snap || drag.bounds.maximized)) {
+      if (Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 5) return
+      drag.bounds = { ...drag.bounds, snap: undefined, maximized: false, x: Math.max(0, Math.min(width - Math.min(drag.bounds.w, width), event.clientX - drag.bounds.w / 2)), y: Math.max(0, Math.min(height - 43, event.clientY - layer.top - 20)) }
+      drag.x = event.clientX; drag.y = event.clientY
+    }
     const dx = event.clientX - drag.x, dy = event.clientY - drag.y
-    const width = window.innerWidth, height = Math.max(200, window.innerHeight - 118)
     const b = drag.bounds
-    if (drag.mode === 'move') onBounds({ ...b, x: Math.max(0, Math.min(width - Math.min(b.w, width), b.x + dx)), y: Math.max(0, Math.min(height - 43, b.y + dy)) })
+    if (drag.mode === 'move') {
+      pending.current = event.clientY <= layer.top + 12 ? 'maximize' : event.clientX <= layer.left + 18 ? (width >= 720 ? 'left' : 'maximize') : event.clientX >= layer.right - 18 ? (width >= 720 ? 'right' : 'maximize') : null
+      setPreview(pending.current)
+      onBounds({ ...b, snap: undefined, maximized: false, x: Math.max(0, Math.min(width - Math.min(b.w, width), b.x + dx)), y: Math.max(0, Math.min(height - 43, b.y + dy)) })
+    }
     else onBounds({ ...b, w: Math.max(Math.min(360, width - b.x), Math.min(width - b.x, b.w + dx)), h: Math.max(Math.min(240, height - b.y), Math.min(height - b.y, b.h + dy)) })
   }
-  const end = () => { gesture.current = null }
-  return <section aria-label={`${app} window`} className={`app-window ${active ? 'is-active' : ''} ${maximized ? 'is-maximized' : ''}`} style={{ left: state.x, top: state.y, width: state.w, height: state.h, zIndex }} onPointerDownCapture={onFocus} onClick={(event) => event.stopPropagation()}>
-    <div className="window-titlebar" onDoubleClick={event => { if (!(event.target as HTMLElement).closest('button')) toggleMaximize() }} onPointerDown={event => start(event, 'move')} onPointerMove={move} onPointerUp={end} onPointerCancel={end} onLostPointerCapture={end}><div className="traffic"><button aria-label={`Close ${app}`} className="close" onClick={onClose}>×</button><button aria-label={`Minimize ${app}`} className="minimize" onClick={onMinimize}>−</button><button aria-label={maximized ? `Restore ${app}` : `Maximize ${app}`} className="zoom" onClick={toggleMaximize}>+</button></div><strong>{app === 'Finder' ? 'Macintosh HD' : app}</strong><span className="titlebar-tools">⌁ ︙</span></div>
+  const cancel = () => { gesture.current = null; pending.current = null; setPreview(null) }
+  const end = () => {
+    if (gesture.current && pending.current) onBounds({ ...gesture.current.bounds, maximized: pending.current === 'maximize', snap: pending.current === 'maximize' ? undefined : pending.current })
+    cancel()
+  }
+  return <>
+    {preview && <div className={`window-snap-preview snap-preview-${preview}`} aria-label={`Snap preview: ${preview}`} />}
+    <section aria-label={`${app} window`} className={`app-window ${active ? 'is-active' : ''} ${maximized ? 'is-maximized' : ''} ${state.snap ? `is-snapped snap-${state.snap}` : ''}`} style={{ left: state.x, top: state.y, width: state.w, height: state.h, zIndex }} onPointerDownCapture={onFocus} onClick={(event) => event.stopPropagation()}>
+    <div className="window-titlebar" onDoubleClick={event => { if (!(event.target as HTMLElement).closest('button')) toggleMaximize() }} onPointerDown={event => start(event, 'move')} onPointerMove={move} onPointerUp={end} onPointerCancel={cancel} onLostPointerCapture={cancel}><div className="traffic"><button aria-label={`Close ${app}`} className="close" onClick={onClose}>×</button><button aria-label={`Minimize ${app}`} className="minimize" onClick={onMinimize}>−</button><button aria-label={maximized || state.snap ? `Restore ${app}` : `Maximize ${app}`} className="zoom" onClick={toggleMaximize}>+</button></div><strong>{app === 'Finder' ? 'Macintosh HD' : app}</strong><span className="titlebar-tools">⌁ ︙</span></div>
     <WindowContent app={app} onLaunch={onLaunch} folderRequest={folderRequest} />
-    {!maximized && <div className="window-resize" title="Drag to resize" onPointerDown={event => start(event, 'resize')} onPointerMove={move} onPointerUp={end} onPointerCancel={end} onLostPointerCapture={end} />}
+    {!maximized && !state.snap && <div className="window-resize" title="Drag to resize" onPointerDown={event => start(event, 'resize')} onPointerMove={move} onPointerUp={end} onPointerCancel={cancel} onLostPointerCapture={cancel} />}
   </section>
+  </>
 }
 
-function Spotlight({ onClose, onLaunch }: { onClose: () => void; onLaunch: (app: AppName) => void }) {
+function Spotlight({ onClose, onLaunch, onFolder }: { onClose: () => void; onLaunch: (app: AppName) => void; onFolder: (path: string) => void }) {
+  const fs = useFileSystem(), editor = useTextEdit()
   const [query, setQuery] = useState('')
   const [selected, setSelected] = useState(0)
   const input = useRef<HTMLInputElement>(null)
   const previousFocus = useRef(document.activeElement as HTMLElement | null)
-  const results = dockApps.filter(app => app.toLowerCase().includes(query.trim().toLowerCase()))
+  const search = query.trim().toLowerCase()
+  const applications = dockApps.filter(app => app.toLowerCase().includes(search)).map(app => ({ id: `app-${app}`, name: app, app, file: null }))
+  const files = fs.entries.filter(file => !file.trashed && file.path !== '/' && (search ? `${file.path}\n${file.kind === 'file' ? file.text : ''}`.toLowerCase().includes(search) : file.kind === 'file')).sort((a,b) => fileName(a.path).localeCompare(fileName(b.path), undefined, { numeric: true })).map(file => ({ id: file.id, name: fileName(file.path), app: null, file }))
+  const allResults = [...applications, ...files]
+  const results = allResults.slice(0,40)
+  const index = Math.min(selected, Math.max(0,results.length-1))
+  const chosen = results[index]
+  useEffect(() => { document.getElementById(`spotlight-${index}`)?.scrollIntoView({ block: 'nearest' }) }, [index, query])
+  const open = (result: typeof chosen) => {
+    if (!result) return
+    if (result.app) onLaunch(result.app)
+    else if (result.file?.kind === 'folder') onFolder(result.file.path)
+    else if (result.file) { editor.select(result.file.id); onLaunch('TextEdit') }
+  }
   useEffect(() => {
     input.current?.focus()
     const previous = previousFocus.current
     return () => previous?.focus()
   }, [])
   return <div className="spotlight-backdrop" onPointerDown={event => { if (event.target === event.currentTarget) onClose() }}>
-    <section className="spotlight-panel" role="dialog" aria-modal="true" aria-label="Spotlight Search" onKeyDown={event => {
+    <section className="spotlight-panel spotlight-files-panel" role="dialog" aria-modal="true" aria-label="Spotlight Search" onKeyDown={event => {
       if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
         event.preventDefault()
-        setSelected(value => results.length ? (value + (event.key === 'ArrowDown' ? 1 : -1) + results.length) % results.length : 0)
+        setSelected(results.length ? (index + (event.key === 'ArrowDown' ? 1 : -1) + results.length) % results.length : 0)
       }
-      if (event.key === 'Enter' && results[selected]) { event.preventDefault(); onLaunch(results[selected]) }
-      if (event.key === 'Tab') { event.preventDefault(); input.current?.focus() }
+      if (event.key === 'Enter' && event.target === input.current && chosen) { event.preventDefault(); open(chosen) }
+      if (event.key === 'Tab') { event.preventDefault(); const close = event.currentTarget.querySelector<HTMLButtonElement>('[aria-label="Close Spotlight"]'); if (document.activeElement === input.current) close?.focus(); else input.current?.focus() }
     }}>
-      <label className="spotlight-search"><Symbol name="search" size={25} /><input ref={input} aria-label="Search applications" placeholder="Spotlight Search" value={query} onChange={event => { setQuery(event.target.value); setSelected(0) }} aria-controls="spotlight-results" aria-activedescendant={results[selected] ? `spotlight-${selected}` : undefined} role="combobox" aria-expanded="true" aria-autocomplete="list" /><button aria-label="Close Spotlight" onClick={onClose}>esc</button></label>
-      <div className="spotlight-results" id="spotlight-results" role="listbox" aria-label="Applications">
-        {results.map((app, index) => <button id={`spotlight-${index}`} role="option" aria-selected={index === selected} className={index === selected ? 'highlighted' : ''} key={app} onMouseEnter={() => setSelected(index)} onClick={() => onLaunch(app)}><NativeIcon name={app} /><span>{app}<small>Application</small></span>{index === selected && <span className="spotlight-return">↵</span>}</button>)}
-        {!results.length && <p className="spotlight-empty">No applications found for “{query}”</p>}
+      <label className="spotlight-search"><Symbol name="search" size={25} /><input ref={input} aria-label="Search apps and files" placeholder="Search apps, files, and contents" value={query} onChange={event => { setQuery(event.target.value); setSelected(0) }} aria-controls="spotlight-results" aria-activedescendant={chosen ? `spotlight-${index}` : undefined} role="combobox" aria-expanded="true" aria-autocomplete="list" /><button aria-label="Close Spotlight" onClick={onClose}>esc</button></label>
+      <div className="spotlight-file-body"><div className="spotlight-results" id="spotlight-results" role="listbox" aria-label="Apps and files">
+        {results.map((result, row) => <button tabIndex={-1} id={`spotlight-${row}`} role="option" aria-selected={row === index} className={row === index ? 'highlighted' : ''} key={result.id} onMouseEnter={() => setSelected(row)} onClick={() => open(result)}><NativeIcon name={result.app || (result.file?.kind === 'folder' ? 'folder' : 'document')} /><span>{result.name}<small>{result.app ? 'Application' : result.file?.path}</small></span>{row === index && <span className="spotlight-return">↵</span>}</button>)}
+        {!results.length && <p className="spotlight-empty">No apps or files found for “{query}”</p>}
       </div>
-      <footer>↑ ↓ to navigate <span>↵ to open · esc to close</span></footer>
+      {chosen && <aside className="spotlight-file-preview" aria-label="Search result preview"><NativeIcon name={chosen.app || (chosen.file?.kind === 'folder' ? 'folder' : 'document')} /><h3>{chosen.name}</h3><small>{chosen.app ? 'Application' : chosen.file?.path}</small>{chosen.file?.kind === 'file' ? <pre>{chosen.file.text.slice(0,2000) || 'Empty document'}{chosen.file.text.length > 2000 ? '\n…' : ''}</pre> : <p>{chosen.app ? 'Press Enter to launch this app.' : `${fs.entries.filter(f => !f.trashed && f.path.startsWith(chosen.file!.path + '/') && !f.path.slice(chosen.file!.path.length + 1).includes('/')).length} items · Press Enter to open in Finder.`}</p>}</aside>}
+      </div>
+      <footer>↑ ↓ to navigate <span>{allResults.length > 40 ? 'Showing first 40 · refine your search · ' : ''}↵ to open · esc to close</span></footer>
     </section>
   </div>
 }
@@ -257,13 +350,14 @@ function Spotlight({ onClose, onLaunch }: { onClose: () => void; onLaunch: (app:
 function WindowContent({ app, onLaunch, folderRequest }: { app: AppName; onLaunch: (app: string) => void; folderRequest: { location: string; revision: number } }) {
   if (app === 'Finder') return <Finder onLaunch={onLaunch} request={folderRequest} />
   if (app === 'Notes') return <Notes />
+  if (app === 'TextEdit') return <TextEdit />
   if (app === 'Safari') return <Safari />
   if (app === 'Terminal') return <Terminal onLaunch={onLaunch} />
-  if (app === 'Trash') return <div className="trash-content"><NativeIcon name="trash" /><h2>Trash is empty</h2><p>There are no items to restore or remove.</p><button onClick={() => onLaunch('Finder')}>Open Finder</button></div>
+  if (app === 'Trash') return <Trash />
   if (app === 'Calendar') return <Calendar />
   return <Settings />
 }
 
-function App() { return <PreferencesProvider><Desktop /></PreferencesProvider> }
+function App() { return <PreferencesProvider><FileSystemProvider><TextEditProvider><Desktop /></TextEditProvider></FileSystemProvider></PreferencesProvider> }
 
 export default App

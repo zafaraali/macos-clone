@@ -1,7 +1,15 @@
 export function NativeIcon({ name, className = '' }: { name: string; className?: string }) {
+  if (name === 'TextEdit') return <svg className={`native-icon ${className}`} viewBox="0 0 64 64" aria-hidden="true">
+    <rect x="8" y="5" width="45" height="55" rx="7" fill="#000" opacity=".15" />
+    <rect x="8" y="3" width="45" height="55" rx="7" fill="#f9fbff" stroke="#b7c6d8" />
+    <path d="M17 17h27M17 24h27M17 31h23M17 38h18M17 45h14" stroke="#94aecb" strokeWidth="2" strokeLinecap="round" />
+    <path d="m27 46 4-12L51 9a4 4 0 0 1 6 5L37 39Z" fill="#f4bb49" stroke="#b47724" strokeWidth="1.2" strokeLinejoin="round" />
+    <path d="m27 46 4-12 6 5Z" fill="#f3dbb8" /><path d="m27 46 2-6 3 3Z" fill="#394657" />
+    <path d="m49 12 6 5" stroke="#d38287" strokeWidth="5" /><path d="m33 33 17-21" stroke="#ffe3a1" strokeWidth="2" />
+  </svg>
   if (name === 'Terminal') return <svg className={`native-icon ${className}`} viewBox="0 0 64 64" aria-hidden="true"><rect x="5" y="7" width="54" height="50" rx="11" fill="#bcbec5" /><rect x="8" y="10" width="48" height="44" rx="8" fill="#17191d" /><path d="m17 23 10 8-10 8m16 1h13" stroke="#eee" strokeWidth="3" fill="none" strokeLinecap="round" strokeLinejoin="round" /></svg>
   const icons: Record<string, string> = {
-    Finder: 'finder', Safari: 'safari', Notes: 'notes', Calendar: 'calendar',
+    TextEdit: 'GenericDocumentIcon', Finder: 'finder', Safari: 'safari', Notes: 'notes', Calendar: 'calendar',
     'System Settings': 'settings', folder: 'GenericFolderIcon', document: 'GenericDocumentIcon',
     trash: 'TrashIcon', shared: 'GroupFolder', disk: 'SidebarInternalDisk',
     airdrop: 'SidebarAirDrop', recents: 'SidebarRecents', desktop: 'SidebarDesktopFolder',

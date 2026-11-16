@@ -93,7 +93,7 @@ function Desktop() {
   const [spotlight, setSpotlight] = useState(false)
   const [mission, setMission] = useState(false)
   const [menuLeft, setMenuLeft] = useState(9)
-  const [context, setContext] = useState<{ x: number; y: number } | null>(null)
+  const [context, setContext] = useState<{ x: number; y: number; rename?: () => void } | null>(null)
   const [info, setInfo] = useState<{ title: string; body: string } | null>(null)
   const [brightness, setBrightness] = useState(100)
   const [dockReveal, setDockReveal] = useState(false)
@@ -217,7 +217,10 @@ function Desktop() {
         {menu && <div ref={menuRef} className="menu-popover functional-menu" role="menu" aria-label={menu === 'apple' ? 'Apple' : menu === 'app' ? active : menu} style={{ left: menuLeft }} onKeyDown={e => { if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); const buttons = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')); const index = buttons.indexOf(document.activeElement as HTMLButtonElement); buttons[(index + (e.key === 'ArrowDown' ? 1 : -1) + buttons.length) % buttons.length]?.focus() } }}>{menuOptions[menu]?.map(option => <button role="menuitem" key={option.label} disabled={option.disabled} onClick={() => { option.action(); setMenu(null) }}>{option.label}</button>)}</div>}
       </header>
 
-      <DesktopFiles onFolder={openFolder} onTextEdit={() => launch('TextEdit')} />
+      <DesktopFiles onFolder={openFolder} onTextEdit={() => launch('TextEdit')} onRenameMenu={(x, y, rename) => {
+        setMenu(null)
+        setContext({ x: Math.max(4, Math.min(x, innerWidth - 244)), y: Math.max(30, Math.min(y, innerHeight - 290)), rename })
+      }} />
 
       <div className="window-layer">
         {(Object.keys(windows) as AppName[]).map((app) => windows[app].open && !windows[app].minimized && (
@@ -242,7 +245,7 @@ function Desktop() {
       {spotlight && <Spotlight onClose={() => setSpotlight(false)} onLaunch={app => { launch(app); setSpotlight(false) }} onFolder={path => { openFolder(path); setSpotlight(false) }} />}
       {(fs.undoLabel || undoError) && <div className="file-undo-bar" onClick={event => event.stopPropagation()}><span role="status">{undoError || fs.undoLabel}</span><button disabled={!fs.undoLabel} onClick={undoFiles}>Undo</button>{undoError && <button aria-label="Dismiss undo error" onClick={() => setUndoError('')}>×</button>}</div>}
       {mission && <MissionControl windows={order.filter(app => windows[app].open).map(app => ({ name: app, minimized: windows[app].minimized, active: active === app }))} onClose={() => setMission(false)} onSelect={name => launch(name as AppName)} />}
-      {context && <div className="desktop-context functional-menu" role="menu" aria-label="Desktop" style={{ left: context.x, top: context.y }} onClick={e => e.stopPropagation()}>{[{ label: 'Open Finder', action: () => openFolder('Desktop') }, { label: 'Open Terminal', action: () => launch('Terminal') }, { label: 'Change Wallpaper…', action: () => settings('Wallpaper') }, { label: preferences.dock === 'hidden' ? 'Show Dock' : 'Hide Dock', action: () => update({ dock: preferences.dock === 'hidden' ? 'show' : 'hidden' }) }, { label: preferences.dock === 'auto' ? 'Turn Off Dock Auto-hide' : 'Automatically Hide Dock', action: () => update({ dock: preferences.dock === 'auto' ? 'show' : 'auto' }) }, { label: 'Show Desktop', action: showDesktop }, { label: 'Restore Windows', action: restoreWindows }].map(option => <button role="menuitem" key={option.label} onClick={() => { option.action(); setContext(null) }}>{option.label}</button>)}</div>}
+      {context && <div className="desktop-context functional-menu" role="menu" aria-label="Desktop" style={{ left: context.x, top: context.y }} onClick={e => e.stopPropagation()}>{[...(context.rename ? [{ label: 'Rename…', action: context.rename }] : []), { label: 'Open Finder', action: () => openFolder('Desktop') }, { label: 'Open Terminal', action: () => launch('Terminal') }, { label: 'Change Wallpaper…', action: () => settings('Wallpaper') }, { label: preferences.dock === 'hidden' ? 'Show Dock' : 'Hide Dock', action: () => update({ dock: preferences.dock === 'hidden' ? 'show' : 'hidden' }) }, { label: preferences.dock === 'auto' ? 'Turn Off Dock Auto-hide' : 'Automatically Hide Dock', action: () => update({ dock: preferences.dock === 'auto' ? 'show' : 'auto' }) }, { label: 'Show Desktop', action: showDesktop }, { label: 'Restore Windows', action: restoreWindows }].map(option => <button role="menuitem" key={option.label} onClick={() => { option.action(); setContext(null) }}>{option.label}</button>)}</div>}
       {info && <div className="desktop-info-overlay" onClick={() => setInfo(null)}><section role="dialog" aria-modal="true" aria-label={info.title} onClick={e => e.stopPropagation()}><h2>{info.title}</h2><p>{info.body}</p><button autoFocus onClick={() => setInfo(null)}>Done</button></section></div>}
     </main>
     </div>

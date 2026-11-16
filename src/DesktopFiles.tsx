@@ -24,6 +24,9 @@ export default function DesktopFiles({ onFolder, onTextEdit }: { onFolder: (path
   const [positions, setPositions] = useState(load)
   const [size, setSize] = useState({ width: Math.max(100, innerWidth - 24), height: Math.max(102, innerHeight - 152) })
   const [selected, setSelected] = useState('')
+  const [renaming, setRenaming] = useState('')
+  const [name, setName] = useState('')
+  const [menu, setMenu] = useState<{ id: string; x: number; y: number } | null>(null)
   const [preview, setPreview] = useState('')
   const [error, setError] = useState('')
   const [drag, setDrag] = useState<{ id: string; x: number; y: number } | null>(null)
@@ -62,6 +65,24 @@ export default function DesktopFiles({ onFolder, onTextEdit }: { onFolder: (path
     if (item.folder) onFolder(item.path)
     else { editor.select(id); onTextEdit() }
   }
+  const startRename = (id: string) => {
+    const item = items.find(item => item.id === id)
+    if (!item || item.shortcut) return
+    setSelected(id); setRenaming(id); setName(item.name); setError(''); setMenu(null)
+  }
+  useEffect(() => {
+    if (!menu) return
+    const dismiss = () => setMenu(null)
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') dismiss() }
+    window.addEventListener('pointerdown', dismiss)
+    window.addEventListener('keydown', escape)
+    window.addEventListener('resize', dismiss)
+    return () => {
+      window.removeEventListener('pointerdown', dismiss)
+      window.removeEventListener('keydown', escape)
+      window.removeEventListener('resize', dismiss)
+    }
+  }, [menu])
   const dropTarget = (x: number, y: number, id: string) => {
     const element = document.elementFromPoint(x, y)
     if (element?.closest('.dock-app[aria-label="Trash"]')) return 'trash'
@@ -101,10 +122,34 @@ export default function DesktopFiles({ onFolder, onTextEdit }: { onFolder: (path
     } catch (error) { setError((error as Error).message) }
   }
   return <>
-    <section ref={section} className="desktop-icons desktop-files" aria-label="Desktop files" onClick={event => { if (event.target === event.currentTarget) setSelected('') }}>
+    <section ref={section} className="desktop-icons desktop-files" aria-label="Desktop files" onContextMenu={event => {
+      const icon = (event.target as HTMLElement).closest<HTMLElement>('[data-desktop-id]')
+      const item = items.find(item => item.id === icon?.dataset.desktopId)
+      if (!item || item.shortcut) return
+      event.preventDefault(); setSelected(item.id)
+      setMenu({ id: item.id, x: Math.max(0, Math.min(event.clientX, innerWidth - 160)), y: Math.max(0, Math.min(event.clientY, innerHeight - 48)) })
+    }} onClick={event => { if (event.target === event.currentTarget) setSelected('') }}>
       {items.map(item => {
         const cell = layout[item.id]
+        if (renaming === item.id) return <div key={item.id} className="desktop-rename" style={{ right: cell.col * cellWidth, top: cell.row * cellHeight }}>
+          <NativeIcon name={item.icon} />
+          <form onSubmit={event => {
+            event.preventDefault()
+            try { fs.rename(item.id, name); setRenaming(''); setError('') }
+            catch (error) { setError((error as Error).message) }
+          }}>
+            <input autoFocus aria-label={`Rename ${item.name}`} value={name} onFocus={event => {
+              const dot = name.lastIndexOf('.')
+              event.target.setSelectionRange(0, !item.folder && dot > 0 ? dot : name.length)
+            }} onChange={event => setName(event.target.value)} onKeyDown={event => {
+              event.stopPropagation()
+              if (event.key === 'Escape') { setRenaming(''); setError('') }
+            }} />
+            <div><button type="submit">Save</button><button type="button" onClick={() => { setRenaming(''); setError('') }}>Cancel</button></div>
+          </form>
+        </div>
         return <button key={item.id} data-desktop-id={item.id} data-desktop-folder={item.folder ? item.path : undefined} className={`desktop-icon ${selected === item.id ? 'desktop-file-selected' : ''} ${target === item.path ? 'desktop-folder-target' : ''}`} aria-label={item.name} aria-pressed={selected === item.id} style={{ right: cell.col * cellWidth, top: cell.row * cellHeight }} onClick={() => setSelected(item.id)} onDoubleClick={() => { if (suppressClick.current) { suppressClick.current = false; return } open(item.id) }} onKeyDown={event => {
+          if (event.key === 'F2' && !item.shortcut) { event.preventDefault(); startRename(item.id) }
           if (event.key === ' ' && !item.shortcut) { event.preventDefault(); setSelected(item.id); setPreview(item.id) }
           if (event.key === 'Enter') { event.preventDefault(); open(item.id) }
           if ((event.key === 'Delete' || event.key === 'Backspace') && !item.shortcut) { event.preventDefault(); try { fs.trash(item.id) } catch (error) { setError((error as Error).message) } }
@@ -112,6 +157,7 @@ export default function DesktopFiles({ onFolder, onTextEdit }: { onFolder: (path
       })}
       {drag && <div className="desktop-drag-ghost" style={{ left: drag.x, top: drag.y }}><NativeIcon name={items.find(i => i.id === drag.id)?.icon ?? 'document'} /><small>{items.find(i => i.id === drag.id)?.name}</small></div>}
     </section>
+    {menu && <div className="desktop-icon-menu" role="menu" style={{ left: menu.x, top: menu.y }} onPointerDown={event => event.stopPropagation()}><button autoFocus role="menuitem" onClick={() => startRename(menu.id)}>Rename…</button></div>}
     {preview && <QuickLook id={preview} onClose={() => setPreview('')} onOpen={() => { const id = preview; setPreview(''); open(id) }} />}
     {(error || saveError) && <div className="desktop-file-message" role="alert">{error || 'Icon positions could not be saved in this browser.'}<button aria-label="Dismiss desktop message" onClick={() => { setError(''); setSaveError(false) }}>×</button></div>}
   </>
